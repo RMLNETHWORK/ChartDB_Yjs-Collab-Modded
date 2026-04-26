@@ -1,4 +1,10 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, {
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+} from 'react';
 import type { DBTable } from '@/lib/domain/db-table';
 import { deepCopy, generateId } from '@/lib/utils';
 import { defaultTableColor, randomColor, viewColor } from '@/lib/colors';
@@ -34,6 +40,8 @@ import {
     type DBCustomType,
 } from '@/lib/domain/db-custom-type';
 import { getDefaultPrimaryKeyType } from '@/lib/data/data-types/data-types';
+import { getDiagramMap, destroyCollabDoc, waitForSync } from '@/lib/collab';
+import type * as Y from 'yjs';
 
 export interface ChartDBProviderProps {
     diagram?: Diagram;
@@ -76,6 +84,80 @@ export const ChartDBProvider: React.FC<
 
     const [highlightedCustomTypeId, setHighlightedCustomTypeId] =
         useState<string>();
+
+    // ── Yjs real-time collaboration bridge ──────────────────────────────
+    const lastSyncedRef = useRef<string>('');
+
+    useEffect(() => {
+        if (!diagramId) return;
+        const snapshot = JSON.stringify({
+            tables,
+            relationships,
+            dependencies,
+            areas,
+            customTypes,
+            notes,
+        });
+        if (snapshot === lastSyncedRef.current) return;
+        lastSyncedRef.current = snapshot;
+        const yMap = getDiagramMap(diagramId);
+        yMap.doc!.transact(() => {
+            yMap.set('tables', tables);
+            yMap.set('relationships', relationships);
+            yMap.set('dependencies', dependencies);
+            yMap.set('areas', areas);
+            yMap.set('customTypes', customTypes);
+            yMap.set('notes', notes);
+        });
+    }, [
+        diagramId,
+        tables,
+        relationships,
+        dependencies,
+        areas,
+        customTypes,
+        notes,
+    ]);
+
+    useEffect(() => {
+        if (!diagramId) return;
+        const yMap = getDiagramMap(diagramId);
+        const onRemoteChange = (
+            _event: Y.YMapEvent<unknown>,
+            txn: Y.Transaction
+        ) => {
+            if (txn.local) return;
+            const newTables = (yMap.get('tables') as DBTable[]) ?? [];
+            const newRelationships =
+                (yMap.get('relationships') as DBRelationship[]) ?? [];
+            const newDependencies =
+                (yMap.get('dependencies') as DBDependency[]) ?? [];
+            const newAreas = (yMap.get('areas') as Area[]) ?? [];
+            const newCustomTypes =
+                (yMap.get('customTypes') as DBCustomType[]) ?? [];
+            const newNotes = (yMap.get('notes') as Note[]) ?? [];
+            lastSyncedRef.current = JSON.stringify({
+                tables: newTables,
+                relationships: newRelationships,
+                dependencies: newDependencies,
+                areas: newAreas,
+                customTypes: newCustomTypes,
+                notes: newNotes,
+            });
+            setTables(newTables);
+            setRelationships(newRelationships);
+            setDependencies(newDependencies);
+            setAreas(newAreas);
+            setCustomTypes(newCustomTypes);
+            setNotes(newNotes);
+        };
+        yMap.observe(onRemoteChange);
+        return () => {
+            yMap.unobserve(onRemoteChange);
+            destroyCollabDoc(diagramId);
+        };
+    }, [diagramId]);
+    // ────────────────────────────────────────────────────────────────────
 
     const diffCalculatedHandler = useCallback((event: DiffCalculatedEvent) => {
         const { tablesToAdd, fieldsToAdd, relationshipsToAdd, areasToAdd } =
@@ -1933,7 +2015,7 @@ export const ChartDBProvider: React.FC<
 
     const loadDiagram: ChartDBContext['loadDiagram'] = useCallback(
         async (diagramId: string) => {
-            const diagram = await storageDB.getDiagram(diagramId, {
+            let diagram = await storageDB.getDiagram(diagramId, {
                 includeRelationships: true,
                 includeTables: true,
                 includeDependencies: true,
@@ -1942,10 +2024,39 @@ export const ChartDBProvider: React.FC<
                 includeNotes: true,
             });
 
+            if (!diagram) {
+                // Not in local IndexedDB — try to bootstrap from Yjs server
+                const yMap = getDiagramMap(diagramId); // connects to server
+                await waitForSync(diagramId); // wait for server sync
+
+                const yjsTables = (yMap.get('tables') as DBTable[]) ?? [];
+
+                if (yjsTables.length > 0 || yMap.has('tables')) {
+                    // Server has data for this diagram — create it locally
+                    diagram = {
+                        id: diagramId,
+                        name: 'Shared Diagram',
+                        databaseType: DatabaseType.GENERIC,
+                        createdAt: new Date(),
+                        updatedAt: new Date(),
+                        tables: yjsTables,
+                        relationships:
+                            (yMap.get('relationships') as DBRelationship[]) ??
+                            [],
+                        dependencies:
+                            (yMap.get('dependencies') as DBDependency[]) ?? [],
+                        areas: (yMap.get('areas') as Area[]) ?? [],
+                        customTypes:
+                            (yMap.get('customTypes') as DBCustomType[]) ?? [],
+                        notes: (yMap.get('notes') as Note[]) ?? [],
+                    };
+                    await storageDB.addDiagram({ diagram });
+                }
+            }
+
             if (diagram) {
                 loadDiagramFromData(diagram);
             }
-
             return diagram;
         },
         [storageDB, loadDiagramFromData]

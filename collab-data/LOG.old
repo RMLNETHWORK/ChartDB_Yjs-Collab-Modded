@@ -1,0 +1,5 @@
+2026/04/26-11:25:25.685667 70eecb7fe6c0 Recovering log #13
+2026/04/26-11:25:25.688546 70eecb7fe6c0 Level-0 table #15: started
+2026/04/26-11:25:25.737432 70eecb7fe6c0 Level-0 table #15: 128333 bytes OK
+2026/04/26-11:25:25.860642 70eecb7fe6c0 Delete type=0 #13
+2026/04/26-11:25:25.861301 70eecb7fe6c0 Delete type=3 #11
