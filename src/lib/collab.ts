@@ -3,7 +3,7 @@ import { WebsocketProvider } from 'y-websocket';
 import { IndexeddbPersistence } from 'y-indexeddb';
 
 const WS_SERVER =
-    import.meta.env.VITE_COLLAB_WS_URL || 'ws://100.74.80.12:1234';
+    import.meta.env.VITE_COLLAB_WS_URL || 'ws://192.168.1.12:1234';
 
 const docCache = new Map<string, Y.Doc>();
 const providerCache = new Map<string, WebsocketProvider>();
@@ -48,6 +48,6 @@ export function waitForSync(diagramId: string): Promise<void> {
             return;
         }
         provider.once('sync', () => resolve());
-        setTimeout(resolve, 3000); // fallback if server unreachable
+        setTimeout(resolve, 10000); // fallback if server unreachable
     });
 }
